@@ -1,7 +1,7 @@
 #ifndef WXFPI_CONSTANTS_H
 #define WXFPI_CONSTANTS_H
 
-std::string SRC_FOLDER = "res/";
-std::string TRG_FOLDER = "out/";
+extern std::string SRC_FOLDER;
+extern std::string TRG_FOLDER;
 
 #endif /* WXFPI_CONSTANTS_H */

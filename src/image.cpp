@@ -1,42 +1,11 @@
+#include <cmath>
 
 #include "image.h"
 #include "constants.h"
-#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv4/opencv2/opencv.hpp>
 
-
-Image::Image(std::string filename) : matrix(cv::imread(SRC_FOLDER + filename, cv::IMREAD_COLOR)) {
-    this->filename = filename;
-    if(matrix.empty()){
-        std::cout << "Warning: empty image with name <" << filename << ">\n";
-    }
-    setSize();
-}
-Image::Image(cv::Mat m) :  w(m.cols), h(m.rows), matrix(m), filename("empty_filename.png")  {
-    setSize();
-}
-Image::Image(const Image& other) : w(other.w), h(other.h), matrix(other.matrix.clone()), filename(other.filename) {
-    setSize();
-}
-Image::Image(int h, int w): matrix(h, w, CV_8UC3, cv::Scalar(255,255,255)){
-    setSize();
-}
-
-void Image::setSize(){
-	cv::Size sz = matrix.size();
-	this->w = sz.width;
-	this->h = sz.height;
-}
-
-void Image::save() {
-    std::cout << "Trying to save file as <" << TRG_FOLDER + filename << "> with type " << matrix.type() << "\n";
-	cv::imwrite(TRG_FOLDER + filename, this->matrix);
-}
-
-int Image::getW(){ return w; }
-int Image::getH(){ return h; }
-cv::Mat& Image::getMatrix(){ return matrix;}
-
-///////////////////////////////////////////////////
+std::string SRC_FOLDER = "res/";
+std::string TRG_FOLDER = "out/";
 
 double get_luminance(int r, int g, int b) {
 	// NTSC formula for pixel intensity;
@@ -47,16 +16,175 @@ double get_luminance(int r, int g, int b) {
 }
 
 uint8_t trunc_pixel(double pixel_value) {
-	if (pixel_value > 255) pixel_value = 255;
+	if (pixel_value > 254) pixel_value = 255;
 	if (pixel_value < 0) pixel_value = 0;
 
-	return (uint8_t)(pixel_value + 0.5);
+	return (uint8_t)(pixel_value + 0.45);
 }
 
-Histogram::Histogram(Image& image) : m_lum_hist(256, 0) {
-	m_n_pixels = image.getW() * image.getH();
+// Euclidean distance
+double dist(int x1, int y1, int x2, int y2){
+	return sqrt((x1 - x2) * (x1 - x2)  +  (y1 - y2) * (y1 - y2));
+}
+double gaussian(double x, double sigma){
+	double exponent = - x * x /(2 * sigma * sigma);
+	double denom = 2 * CV_PI * sigma * sigma;
+    return exp(exponent) / denom;	
+}
 
-	cv::Mat& matrix = image.getMatrix();
+cv::Mat subtract(cv::Mat m1, cv::Mat m2){
+    cv::Mat m = m2.clone();
+    int w = m.cols;
+    int h = m.rows;
+    for (int r = 0; r < h; ++r) {
+		for (int c = 0; c < w; ++c) {
+            cv::Vec3b& res = m.at<cv::Vec3b>(r,c);
+            cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
+            cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
+            
+            res[0] = trunc_pixel(0.0 + p1[0] - p2[0]);
+            res[1] = trunc_pixel(0.0 + p1[1] - p2[1]);
+            res[2] = trunc_pixel(0.0 + p1[2] - p2[2]);    
+        }
+    }
+    return m;
+}
+
+cv::Mat subtract_mod(cv::Mat m1, cv::Mat m2){
+    cv::Mat m = m2.clone();
+    int w = m.cols;
+    int h = m.rows;
+    for (int r = 0; r < h; ++r) {
+		for (int c = 0; c < w; ++c) {
+            cv::Vec3b& res = m.at<cv::Vec3b>(r,c);
+            cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
+            cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
+            
+            res[0] = trunc_pixel(std::abs(0.0 + p1[0] - p2[0]));
+            res[1] = trunc_pixel(std::abs(0.0 + p1[1] - p2[1]));
+            res[2] = trunc_pixel(std::abs(0.0 + p1[2] - p2[2]));    
+        }
+    }
+    return m;
+}
+
+cv::Mat make_high_pass(cv::Mat image, double sigma){
+	cv::Mat blurred;
+	cv::GaussianBlur(image, blurred, cv::Size(31,31), sigma, sigma);
+	return subtract_mod(image,blurred);
+	// return image;
+}
+
+// Odd diameter
+double make_pixel_textureness(cv::Mat &image, cv::Mat &H, int x, int y, int d, int sigma_color, int sigma_space){
+	double top_sum = 0;
+	double bot_sum = 0;
+
+	for(int a = 0; a < d; ++a){
+		for(int b = 0; b < d; ++b){
+			int x_neigh = x + a - d/2;
+			int y_neigh = y + b - d/2;
+			if(x_neigh < 0) x_neigh = 0;
+			if(y_neigh < 0) y_neigh = 0;
+			if(x_neigh >= image.cols) x_neigh -= x_neigh - image.cols + 1; 
+			if(y_neigh >= image.rows) y_neigh -= y_neigh - image.rows + 1; 
+			
+			cv::Vec3b & h_neigh = H.at<cv::Vec3b>(y_neigh, x_neigh);
+			cv::Vec3b & i_neigh = image.at<cv::Vec3b>(y_neigh, x_neigh);
+			cv::Vec3b & i_here  = image.at<cv::Vec3b>(y, x);
+			
+			double p_color = gaussian( std::abs(i_neigh[0] - i_here[0]) ,sigma_color);
+			double p_space = gaussian( dist(x,y, x_neigh, y_neigh) ,sigma_space);
+			
+			top_sum += p_color * p_space * h_neigh[0];
+			bot_sum += p_color * p_space;
+		}
+	}
+	
+	double result = top_sum/bot_sum;
+	// if( (x + y) % 231 == 0)
+		// std::cout << "\t\t Pixel " << x <<" " << y << " :   " << result << "\n";
+	return result;
+}
+
+cv::Mat make_textureness(cv::Mat image, int d, int sigma_color, int sigma_space){
+	cv::Mat H = make_high_pass(image, 36.5);
+	cv::Mat result = cv::Mat( image.rows, image.cols, CV_64F, 0.0);
+	
+	for (int r = 0; r < image.rows; ++r) {
+		for (int c = 0; c < image.cols; ++c) {
+			double t = make_pixel_textureness(image, H, c, r, d, sigma_color, sigma_space);
+		
+			double& p = result.at<double>(r,c);
+			p = t;
+		}
+	}
+	
+	return result;
+}
+
+cv::Mat make_bilateral_filter(cv::Mat mat, double sigma_color, double sigma_space, int d){
+    if( sigma_space == -1) { sigma_space = std::min(mat.rows, mat.cols) / 16.0; }
+    std::cout << "Bilateral: C[" << sigma_color << "], S[" << sigma_space << "], D[" << d << "]\n";
+    cv::Mat res;  cv::bilateralFilter(mat, res, d, sigma_color, sigma_space);
+    return res;
+}
+
+
+void save_image(cv::Mat m , std::string filename){
+    std::cout << "Saving matrix as <" << TRG_FOLDER + filename << "> with type " << m.type() << std::endl;
+    cv::imwrite(TRG_FOLDER + filename, m);	
+}
+
+cv::Mat make_combine(cv::Mat background, cv::Mat detail, cv::Mat rho){
+	cv::Mat result = background.clone();
+	
+	for (int r = 0; r < result.rows; ++r) {
+		for (int c = 0; c < result.cols; ++c) {
+
+			cv::Vec3b& p_res = result.at<cv::Vec3b>(r,c);	
+			cv::Vec3b& p_backg = background.at<cv::Vec3b>(r,c);	
+			cv::Vec3b& p_detail = detail.at<cv::Vec3b>(r,c);	
+			double& p_rho = rho.at<double>(r,c);	
+			
+			if( p_rho < 0 ) p_rho = 0;
+			p_res[0] = trunc_pixel( p_backg[0] + p_rho * p_detail[0] );
+			p_res[1] = p_res[2] = p_res[0];
+
+			// if( (r + c) % 231 == 0)
+			// 	std::cout << "\t\t Pixel " << r <<" " << c << " :   " <<  (int)p_backg[0]  << " + " <<  p_rho << " * " << (int) p_detail[0]  << "\n";
+		}
+	}
+	
+	return result;
+}
+
+cv::Mat make_rho(cv::Mat target_textureness, cv::Mat scaled_bkg_textureness, cv::Mat in_textureness){
+	cv::Size sz = {target_textureness.cols, target_textureness.rows};
+	cv::Mat result(sz, CV_64F, cv::Scalar(0, 0, 0));
+		
+	for (int r = 0; r < result.rows; ++r) {
+		for (int c = 0; c < result.cols; ++c) {
+			double & p = result.at<double>(r,c); 
+			double & p_targ = target_textureness.at<double>(r,c); 
+			double & p_bkg = scaled_bkg_textureness.at<double>(r,c); 
+			double & p_det = in_textureness.at<double>(r,c); 
+
+
+			p =  2 * (p_targ - p_bkg) / p_det;
+			if( isnan(p) || isinf(p) ) p = 1;
+
+			// if( (r + c) % 231 == 0)
+			// 	std::cout << "\tRho sample " << r << " " << c << " :  " << p_targ << " - " << p_bkg << " / " << p_det << " = " << p << "\n";
+		}
+	}
+	return result; 
+}
+
+
+Histogram::Histogram(cv::Mat& matrix) : m_lum_hist(256, 0) {
+	m_n_pixels = matrix.rows * matrix.cols;
+
 	
 	for (int r = 0; r < matrix.rows; ++r) {
 		for (int c = 0; c < matrix.cols; ++c) {
@@ -93,7 +221,7 @@ std::vector<int> Histogram::GetCumulative() {
 	std::vector<int> cum_hist = std::vector<int>(m_lum_hist);
 
 	for (int i = 1; i < 256; ++i) {
-		cum_hist[i] += cum_hist[i - 1];
+			cum_hist[i] += cum_hist[i - 1];
 	}
 	return cum_hist;
 }
@@ -120,30 +248,17 @@ cv::Vec3b change_luminance(cv::Vec3b p, double new_luminance) {
 }
 
 
-///////////////////////////////////////////////////
 
-Image make_bilateral_filter(Image & image, int d, double sigma_color, double sigma_space){
-    Image result(image);
-    cv::bilateralFilter(image.getMatrix(), result.getMatrix(), d, sigma_color, sigma_space);
-    return result;
-}
-
-Image make_subtract_image(Image & im1, Image & im2){
-    Image result(im1);
-    result.getMatrix() = 128 + im1.getMatrix() - im2.getMatrix();    
-    return result;
-}
-
-Image make_match_image_histogram(Image & im1, Image & im2 ){
+cv::Mat make_match_image_histogram(cv::Mat im1, cv::Mat & im2 ){
     Histogram hist = Histogram(im2);
     return make_match_histogram(im1, hist);
 }
 
-Image make_match_histogram(Image & im_src, Histogram & new_hist ){
-    Image image(im_src);
-	Histogram cur_hist(im_src);
+cv::Mat make_match_histogram(cv::Mat & mat, Histogram & new_hist ){
+    cv::Mat result = mat.clone();
+	Histogram cur_hist(mat);
     
-    int h = im_src.getH(),  w = im_src.getW();
+    int h = mat.rows,  w = mat.cols;
 
 	std::vector<double> cur_cum = cur_hist.GetRelCumulative();
 	std::vector<double> new_cum = new_hist.GetRelCumulative();
@@ -163,38 +278,15 @@ Image make_match_histogram(Image & im_src, Histogram & new_hist ){
 		}
 		new_shade[i_cur] = i_new;
 	}
-    
-    cv::Mat & mat = image.getMatrix();
-    
+        
 	for (int r = 0; r < h; ++r) {
 		for (int c = 0; c < w; ++c) {
-			cv::Vec3b& p = mat.at<cv::Vec3b>(r, c);
+			cv::Vec3b& p = result.at<cv::Vec3b>(r, c);
 			int lum = trunc_pixel(get_luminance(p[0], p[1], p[2]));
 			p = change_luminance(p, new_shade[ lum ]);
+			// p[1] = p[2] = p[0]; // TODO: FIX
 		}
 	}
 
-    return image;
-}
-
-Image make_add_image(Image & im1, Image & im2){
-    Image result(im1);
-    cv::Mat & m = result.getMatrix();
-    cv::Mat & m1 = im1.getMatrix();
-    cv::Mat & m2 = im2.getMatrix();
-    
-    int h = im1.getH(),  w = im1.getW();
-    
-	for (int r = 0; r < h; ++r) {
-		for (int c = 0; c < w; ++c) {
-            cv::Vec3b& res = m.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
-            
-            res[0] = trunc_pixel(0.0 + p1[0] + p2[0]);
-            res[1] = trunc_pixel(0.0 + p1[1] + p2[1]);
-            res[2] = trunc_pixel(0.0 + p1[2] + p2[2]);    
-        }
-    }
     return result;
 }
