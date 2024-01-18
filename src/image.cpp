@@ -32,7 +32,7 @@ double gaussian(double x, double sigma){
     return exp(exponent) / denom;	
 }
 
-cv::Mat subtract(cv::Mat m1, cv::Mat m2){
+cv::Mat subtract(cv::Mat m1, cv::Mat m2, int to_add){
     cv::Mat m = m2.clone();
     int w = m.cols;
     int h = m.rows;
@@ -42,9 +42,9 @@ cv::Mat subtract(cv::Mat m1, cv::Mat m2){
             cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
             cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
             
-            res[0] = trunc_pixel(0.0 + p1[0] - p2[0]);
-            res[1] = trunc_pixel(0.0 + p1[1] - p2[1]);
-            res[2] = trunc_pixel(0.0 + p1[2] - p2[2]);    
+            res[0] = trunc_pixel(0.0 + to_add + p1[0] - p2[0]);
+            res[1] = trunc_pixel(0.0 + to_add + p1[1] - p2[1]);
+            res[2] = trunc_pixel(0.0 + to_add + p1[2] - p2[2]);    
         }
     }
     return m;
@@ -68,11 +68,11 @@ cv::Mat subtract_mod(cv::Mat m1, cv::Mat m2){
     return m;
 }
 
-cv::Mat make_high_pass(cv::Mat image, double sigma){
+cv::Mat make_high_pass(cv::Mat image, int d, double sigma){
 	cv::Mat blurred;
-	cv::GaussianBlur(image, blurred, cv::Size(31,31), sigma, sigma);
+	// First, we compute a high-pass version H of the image using the same cutoff sigma-s
+	cv::GaussianBlur(image, blurred, cv::Size(0,0), sigma, sigma);
 	return subtract_mod(image,blurred);
-	// return image;
 }
 
 // Odd diameter
@@ -103,12 +103,12 @@ double make_pixel_textureness(cv::Mat &image, cv::Mat &H, int x, int y, int d, i
 	
 	double result = top_sum/bot_sum;
 	// if( (x + y) % 231 == 0)
-		// std::cout << "\t\t Pixel " << x <<" " << y << " :   " << result << "\n";
+	// 	std::cout << "\t\t Pixel " << x <<" " << y << " :   " << result << "\n";
 	return result;
 }
 
 cv::Mat make_textureness(cv::Mat image, int d, int sigma_color, int sigma_space){
-	cv::Mat H = make_high_pass(image, 36.5);
+	cv::Mat H = make_high_pass(image, d, 36.5);
 	cv::Mat result = cv::Mat( image.rows, image.cols, CV_64F, 0.0);
 	
 	for (int r = 0; r < image.rows; ++r) {
@@ -136,19 +136,19 @@ void save_image(cv::Mat m , std::string filename){
     cv::imwrite(TRG_FOLDER + filename, m);	
 }
 
-cv::Mat make_combine(cv::Mat background, cv::Mat detail, cv::Mat rho){
+cv::Mat make_combine(cv::Mat background, cv::Mat detail, cv::Mat rho, int to_add){
 	cv::Mat result = background.clone();
 	
 	for (int r = 0; r < result.rows; ++r) {
 		for (int c = 0; c < result.cols; ++c) {
 
 			cv::Vec3b& p_res = result.at<cv::Vec3b>(r,c);	
-			cv::Vec3b& p_backg = background.at<cv::Vec3b>(r,c);	
-			cv::Vec3b& p_detail = detail.at<cv::Vec3b>(r,c);	
-			double& p_rho = rho.at<double>(r,c);	
+			double p_backg = background.at<cv::Vec3b>(r,c)[0];	
+			double p_detail = detail.at<cv::Vec3b>(r,c)[0];	
+			double p_rho = rho.at<double>(r,c);	
 			
-			if( p_rho < 0 ) p_rho = 0;
-			p_res[0] = trunc_pixel( p_backg[0] + p_rho * p_detail[0] );
+			if( p_rho < 1 ) p_rho = 1; // Would cause halo effects
+			p_res[0] = trunc_pixel( p_backg + p_rho * (p_detail + 0.0 + to_add));
 			p_res[1] = p_res[2] = p_res[0];
 
 			// if( (r + c) % 231 == 0)
@@ -171,11 +171,11 @@ cv::Mat make_rho(cv::Mat target_textureness, cv::Mat scaled_bkg_textureness, cv:
 			double & p_det = in_textureness.at<double>(r,c); 
 
 
-			p =  2 * (p_targ - p_bkg) / p_det;
+			p = (p_targ - p_bkg) / p_det;
 			if( isnan(p) || isinf(p) ) p = 1;
 
-			// if( (r + c) % 231 == 0)
-			// 	std::cout << "\tRho sample " << r << " " << c << " :  " << p_targ << " - " << p_bkg << " / " << p_det << " = " << p << "\n";
+			if( (r + c) % 231 == 0)
+				std::cout << "\tRho sample " << r << " " << c << " :  " << p_targ << " - " << p_bkg << " / " << p_det << " = " << p << "\n";
 		}
 	}
 	return result; 
