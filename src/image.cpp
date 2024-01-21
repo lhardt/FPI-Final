@@ -28,55 +28,65 @@ double dist(int x1, int y1, int x2, int y2){
 }
 double gaussian(double x, double sigma){
 	double exponent = - x * x /(2 * sigma * sigma);
-	double denom = 2 * CV_PI * sigma * sigma;
+	double denom = 1; //2 * CV_PI * sigma * sigma;
     return exp(exponent) / denom;	
 }
 
-cv::Mat subtract(cv::Mat m1, cv::Mat m2, int to_add){
-    cv::Mat m = m2.clone();
-    int w = m.cols;
-    int h = m.rows;
+cv::Mat convert_to_float(cv::Mat& image){
+	if( image.type() == CV_32F ){
+		std::cout << "\tIgnoring conversion to float\n";
+		return image.clone();
+	}
+	std::cout << "\tConverting to float\n";
+
+    int w = image.cols;     int h = image.rows;
+	cv::Mat r2 = cv::Mat( h, w, CV_32F, 0.0f);
+
     for (int r = 0; r < h; ++r) {
 		for (int c = 0; c < w; ++c) {
-            cv::Vec3b& res = m.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
-            
-            res[0] = trunc_pixel(0.0 + to_add + p1[0] - p2[0]);
-            res[1] = trunc_pixel(0.0 + to_add + p1[1] - p2[1]);
-            res[2] = trunc_pixel(0.0 + to_add + p1[2] - p2[2]);    
-        }
-    }
-    return m;
+            float& res = r2.at<float>(r,c);
+            cv::Vec3b p = image.at<cv::Vec3b>(r,c);
+			res = p[0] + 0.0f;
+		}
+	}
+	return r2;	
 }
 
-cv::Mat subtract_mod(cv::Mat m1, cv::Mat m2){
-    cv::Mat m = m2.clone();
-    int w = m.cols;
-    int h = m.rows;
+cv::Mat convert_to_8uc3(cv::Mat& image){
+	if( image.type() == CV_8UC3 ){
+		return image.clone();
+	}
+	if( image.type() != CV_32F ){
+		std::cout << "Using convert_to_u8c3 wrongly! Type is " << image.type() << '\n';
+	}
+	
+    int w = image.cols;     int h = image.rows;
+	cv::Mat r2 = cv::Mat( h, w, CV_8UC3, cv::Scalar(0,0,0));
+
     for (int r = 0; r < h; ++r) {
 		for (int c = 0; c < w; ++c) {
-            cv::Vec3b& res = m.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p1 = m1.at<cv::Vec3b>(r,c);
-            cv::Vec3b& p2 = m2.at<cv::Vec3b>(r,c);
-            
-            res[0] = trunc_pixel(std::abs(0.0 + p1[0] - p2[0]));
-            res[1] = trunc_pixel(std::abs(0.0 + p1[1] - p2[1]));
-            res[2] = trunc_pixel(std::abs(0.0 + p1[2] - p2[2]));    
-        }
-    }
-    return m;
+            cv::Vec3b& res = r2.at<cv::Vec3b>(r,c);
+            float p = image.at<float>(r,c);
+			res[0] = res[1] = res[2] = trunc_pixel(p);
+		}
+	}
+	return r2;	
 }
 
-cv::Mat make_high_pass(cv::Mat image, int d, double sigma){
+cv::Mat make_high_pass(cv::Mat& image, int d, double sigma){
 	cv::Mat blurred;
 	// First, we compute a high-pass version H of the image using the same cutoff sigma-s
-	cv::GaussianBlur(image, blurred, cv::Size(0,0), sigma, sigma);
-	return subtract_mod(image,blurred);
+	// if( image.type() != CV_8UC3 ){
+	// 	cv::Mat src = convert_to_8uc3(src);
+	// 	cv::GaussianBlur(src, blurred, cv::Size(d,d), sigma, sigma);
+	// } else {	
+		cv::GaussianBlur(image, blurred, cv::Size(d,d), sigma, sigma);
+	// }
+	return image - blurred + 128;//(image, blurred, 128);
 }
 
 // Odd diameter
-double make_pixel_textureness(cv::Mat &image, cv::Mat &H, int x, int y, int d, int sigma_color, int sigma_space){
+float make_pixel_textureness(cv::Mat &image, cv::Mat &H, int x, int y, int d, int sigma_color, int sigma_space){
 	double top_sum = 0;
 	double bot_sum = 0;
 
@@ -89,33 +99,36 @@ double make_pixel_textureness(cv::Mat &image, cv::Mat &H, int x, int y, int d, i
 			if(x_neigh >= image.cols) x_neigh -= x_neigh - image.cols + 1; 
 			if(y_neigh >= image.rows) y_neigh -= y_neigh - image.rows + 1; 
 			
-			cv::Vec3b & h_neigh = H.at<cv::Vec3b>(y_neigh, x_neigh);
-			cv::Vec3b & i_neigh = image.at<cv::Vec3b>(y_neigh, x_neigh);
-			cv::Vec3b & i_here  = image.at<cv::Vec3b>(y, x);
+			// Module of high frequency
+			float   h_neigh = std::abs(H.at<float>(y_neigh, x_neigh) - 128.0f);
+			float & i_neigh = image.at<float>(y_neigh, x_neigh);
+			float & i_here  = image.at<float>(y, x);
 			
-			double p_color = gaussian( std::abs(i_neigh[0] - i_here[0]) ,sigma_color);
+			double p_color = gaussian( std::abs(i_neigh - i_here) ,sigma_color);
 			double p_space = gaussian( dist(x,y, x_neigh, y_neigh) ,sigma_space);
 			
-			top_sum += p_color * p_space * h_neigh[0];
+			top_sum += p_color * p_space * h_neigh;
 			bot_sum += p_color * p_space;
 		}
 	}
 	
 	double result = top_sum/bot_sum;
-	// if( (x + y) % 231 == 0)
-	// 	std::cout << "\t\t Pixel " << x <<" " << y << " :   " << result << "\n";
+	// if( (x + y) % 1013 == 0)
+	// 	std::cout << "\t\t Pixel " << x <<" " << y << " :   " <<  top_sum << "/" << bot_sum << " =  " << result << "\n";
 	return result;
 }
 
-cv::Mat make_textureness(cv::Mat image, int d, int sigma_color, int sigma_space){
-	cv::Mat H = make_high_pass(image, d, 36.5);
-	cv::Mat result = cv::Mat( image.rows, image.cols, CV_64F, 0.0);
+cv::Mat make_textureness(cv::Mat &_image, int d, int sigma_color, int sigma_space){
+	std::cout << "Making Textureness D[" << d << "], SC[" << sigma_color  << "], SS[" << sigma_space << "]\n";
+	cv::Mat image = convert_to_float(_image);
+	cv::Mat H = make_high_pass(image, d, sigma_space);
+	cv::Mat result = cv::Mat( image.rows, image.cols, CV_32F, 0.0);
 	
 	for (int r = 0; r < image.rows; ++r) {
 		for (int c = 0; c < image.cols; ++c) {
-			double t = make_pixel_textureness(image, H, c, r, d, sigma_color, sigma_space);
+			float t = make_pixel_textureness(image, H, c, r, d, sigma_color, sigma_space);
 		
-			double& p = result.at<double>(r,c);
+			float& p = result.at<float>(r,c);
 			p = t;
 		}
 	}
@@ -136,20 +149,23 @@ void save_image(cv::Mat m , std::string filename){
     cv::imwrite(TRG_FOLDER + filename, m);	
 }
 
-cv::Mat make_combine(cv::Mat background, cv::Mat detail, cv::Mat rho, int to_add){
+cv::Mat make_combine(cv::Mat& _background, cv::Mat& _detail, cv::Mat& _rho, float to_add){
+	cv::Mat background = convert_to_float(_background);
+	cv::Mat detail = convert_to_float(_detail);
+	cv::Mat rho = convert_to_float(_rho);
+
 	cv::Mat result = background.clone();
 	
 	for (int r = 0; r < result.rows; ++r) {
 		for (int c = 0; c < result.cols; ++c) {
 
-			cv::Vec3b& p_res = result.at<cv::Vec3b>(r,c);	
-			double p_backg = background.at<cv::Vec3b>(r,c)[0];	
-			double p_detail = detail.at<cv::Vec3b>(r,c)[0];	
-			double p_rho = rho.at<double>(r,c);	
+			float& p_res = result.at<float>(r,c);	
+			double p_backg = background.at<float>(r,c);	
+			double p_detail = detail.at<float>(r,c);	
+			double p_rho = rho.at<float>(r,c);	
 			
-			if( p_rho < 1 ) p_rho = 1; // Would cause halo effects
-			p_res[0] = trunc_pixel( p_backg + p_rho * (p_detail + 0.0 + to_add));
-			p_res[1] = p_res[2] = p_res[0];
+			if( p_rho < 0 ) p_rho = 0; // Would cause halo effects
+			p_res = trunc_pixel( p_backg + p_rho * (p_detail + 0.0 + to_add));
 
 			// if( (r + c) % 231 == 0)
 			// 	std::cout << "\t\t Pixel " << r <<" " << c << " :   " <<  (int)p_backg[0]  << " + " <<  p_rho << " * " << (int) p_detail[0]  << "\n";
@@ -161,21 +177,21 @@ cv::Mat make_combine(cv::Mat background, cv::Mat detail, cv::Mat rho, int to_add
 
 cv::Mat make_rho(cv::Mat target_textureness, cv::Mat scaled_bkg_textureness, cv::Mat in_textureness){
 	cv::Size sz = {target_textureness.cols, target_textureness.rows};
-	cv::Mat result(sz, CV_64F, cv::Scalar(0, 0, 0));
+	cv::Mat result(sz, CV_32F, 0.0f);
 		
 	for (int r = 0; r < result.rows; ++r) {
 		for (int c = 0; c < result.cols; ++c) {
-			double & p = result.at<double>(r,c); 
-			double & p_targ = target_textureness.at<double>(r,c); 
-			double & p_bkg = scaled_bkg_textureness.at<double>(r,c); 
-			double & p_det = in_textureness.at<double>(r,c); 
+			float & p = result.at<float>(r,c); 
+			float & p_targ = target_textureness.at<float>(r,c); 
+			float & p_bkg = scaled_bkg_textureness.at<float>(r,c); 
+			float & p_det = in_textureness.at<float>(r,c); 
 
 
 			p = (p_targ - p_bkg) / p_det;
 			if( isnan(p) || isinf(p) ) p = 1;
 
-			if( (r + c) % 231 == 0)
-				std::cout << "\tRho sample " << r << " " << c << " :  " << p_targ << " - " << p_bkg << " / " << p_det << " = " << p << "\n";
+			// if( (r + c) % 231 == 0)
+			// 	std::cout << "\tRho sample " << r << " " << c << " :  " << p_targ << " - " << p_bkg << " / " << p_det << " = " << p << "\n";
 		}
 	}
 	return result; 
@@ -249,7 +265,9 @@ cv::Vec3b change_luminance(cv::Vec3b p, double new_luminance) {
 
 
 
-cv::Mat make_match_image_histogram(cv::Mat im1, cv::Mat & im2 ){
+cv::Mat make_match_image_histogram(cv::Mat _im1, cv::Mat & _im2 ){
+	cv::Mat im1 = convert_to_8uc3(_im1);
+	cv::Mat im2 = convert_to_8uc3(_im2);
     Histogram hist = Histogram(im2);
     return make_match_histogram(im1, hist);
 }
