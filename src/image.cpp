@@ -16,7 +16,7 @@ double get_luminance(int r, int g, int b) {
 }
 
 uint8_t trunc_pixel(double pixel_value) {
-	if (pixel_value > 254) pixel_value = 255;
+	if (pixel_value > 254.5) pixel_value = 255;
 	if (pixel_value < 0) pixel_value = 0;
 
 	return (uint8_t)(pixel_value + 0.45);
@@ -28,7 +28,8 @@ double dist(int x1, int y1, int x2, int y2){
 }
 double gaussian(double x, double sigma){
 	double exponent = - x * x /(2 * sigma * sigma);
-	double denom = 1; //2 * CV_PI * sigma * sigma;
+	// double denom = 1; //2 * CV_PI * sigma * sigma;
+	double denom = sigma * sqrt(2 * CV_PI) ; // * sigma;
     return exp(exponent) / denom;	
 }
 
@@ -142,6 +143,18 @@ cv::Mat make_bilateral_filter(cv::Mat mat, double sigma_color, double sigma_spac
     cv::Mat res;  cv::bilateralFilter(mat, res, d, sigma_color, sigma_space);
     return res;
 }
+
+void make_bilateral_filter_2(cv::Mat & _mat, cv::Mat &trg_base, cv::Mat &trg_detail, double sigma_color, double sigma_space, int d){
+	cv::Mat mat = convert_to_float(_mat);
+	
+	cv::log(mat, mat);
+    cv::Mat bkg_log;  cv::bilateralFilter(mat, bkg_log, d, sigma_color, sigma_space);
+	
+	cv::exp(bkg_log, trg_base);
+	// cv::exp(detail_log, trg_detail);
+	trg_detail = _mat - trg_base + 128.0 ;
+}
+
 
 
 void save_image(cv::Mat m , std::string filename){

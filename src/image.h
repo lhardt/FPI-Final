@@ -37,6 +37,7 @@ cv::Mat make_match_histogram(cv::Mat & mat, Histogram & new_hist );
 cv::Mat make_match_image_histogram(cv::Mat im1, cv::Mat & im2 );
 cv::Mat make_combine(cv::Mat& background, cv::Mat& detail, cv::Mat& rho, float to_add = 0);    
 cv::Mat make_bilateral_filter(cv::Mat mat, double sigma_color, double sigma_space = -1, int d = -1);
+void make_bilateral_filter_2(cv::Mat & mat, cv::Mat &trg_base, cv::Mat &trg_detail, double sigma_color, double sigma_space = -1, int d = -1);
 cv::Mat make_rho(cv::Mat target_textureness, cv::Mat scaled_bkg_textureness, cv::Mat in_textureness);
 void save_image(cv::Mat m , std::string filename);
 
