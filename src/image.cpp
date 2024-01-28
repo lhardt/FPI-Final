@@ -144,15 +144,14 @@ cv::Mat make_bilateral_filter(cv::Mat mat, double sigma_color, double sigma_spac
     return res;
 }
 
-void make_bilateral_filter_2(cv::Mat & _mat, cv::Mat &trg_base, cv::Mat &trg_detail, double sigma_color, double sigma_space, int d){
-	cv::Mat mat = convert_to_float(_mat);
-	
+cv::Mat make_bilateral_filter_2(cv::Mat _mat, double sigma_color, double sigma_space, int d){
+	std::cout << "Bilateral2: C[" << sigma_color << "], S[" << sigma_space << "], D[" << d << "]\n";
+    cv::Mat mat = convert_to_float(_mat);
 	cv::log(mat, mat);
-    cv::Mat bkg_log;  cv::bilateralFilter(mat, bkg_log, d, sigma_color, sigma_space);
+	cv::Mat bkg_log;  cv::bilateralFilter(mat, bkg_log, d, sigma_color, sigma_space);
 	
-	cv::exp(bkg_log, trg_base);
-	// cv::exp(detail_log, trg_detail);
-	trg_detail = _mat - trg_base + 128.0 ;
+	cv::Mat trg_base; cv::exp(bkg_log, trg_base);
+	return trg_base;
 }
 
 
